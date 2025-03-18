@@ -1,8 +1,10 @@
 import sys
 import os
+import ffmpeg
+import whisper
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                             QHBoxLayout, QPushButton, QLineEdit, QLabel, 
-                            QFileDialog, QProgressBar, QTextEdit, QMessageBox)
+                            QFileDialog, QProgressBar, QTextEdit, QMessageBox, QCheckBox)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 import yt_dlp
 
@@ -10,240 +12,173 @@ class DescargadorThread(QThread):
     progreso = pyqtSignal(str)
     error = pyqtSignal(str)
     completado = pyqtSignal()
-
-    def __init__(self, urls, carpeta_destino):
+    progreso_porcentaje = pyqtSignal(int)
+    
+    def __init__(self, urls, carpeta_destino, transcribir_audio):
         super().__init__()
         self.urls = urls
         self.carpeta_destino = carpeta_destino
+        self.transcribir_audio = transcribir_audio
 
     def run(self):
         try:
-            for url in self.urls:
+            total_videos = len(self.urls)
+            for index, url in enumerate(self.urls, start=1):
                 self.progreso.emit(f"Procesando: {url}")
                 self.descargar_video(url)
+                self.progreso_porcentaje.emit(int((index / total_videos) * 100))
+            
+            if self.transcribir_audio:
+                self.progreso.emit("Extrayendo audio de todos los videos descargados...")
+                self.convertir_videos_a_audio()
+                
+                self.progreso.emit("Eliminando archivos de video MP4...")
+                self.eliminar_videos_mp4()
+                
+                self.progreso.emit("Iniciando transcripción de archivos de audio...")
+                self.procesar_transcripciones()
+            
             self.completado.emit()
         except Exception as e:
             self.error.emit(str(e))
 
     def descargar_video(self, url):
         try:
-            # Limpiar la URL
-            url = url.strip('"').strip("'").strip()
-            
+            url = url.strip()
             ydl_opts = {
                 'format': 'best[ext=mp4]',
                 'outtmpl': os.path.join(self.carpeta_destino, '%(title)s.%(ext)s'),
-                'quiet': False,
-                'no_warnings': False,
-                'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-                },
-                'extract_flat': False,
-                'force_generic_extractor': False,
-                'socket_timeout': 30,
-                'retries': 10,
-                'fragment_retries': 10,
-                'file_access_retries': 10,
-                'extractor_retries': 10,
-                'ignoreerrors': True,
-                'no_check_certificate': True
             }
-
+            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                try:
-                    # Obtener información del video
-                    info = ydl.extract_info(url, download=False)
-                    if info is None:
-                        raise Exception("No se pudo obtener información del video")
-                    
-                    self.progreso.emit(f"Descargando: {info.get('title', 'Video sin título')}")
-                    ydl.download([url])
-                    
-                except yt_dlp.utils.DownloadError as e:
-                    # Si falla, intentar con configuración alternativa
-                    self.progreso.emit("Primer intento fallido, probando configuración alternativa...")
-                    ydl_opts.update({
-                        'format': 'best',
-                        'force_generic_extractor': True
-                    })
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl2:
-                        ydl2.download([url])
-                        
+                ydl.extract_info(url, download=True)
         except Exception as e:
             self.error.emit(f"Error al descargar el video: {str(e)}")
+
+    def convertir_videos_a_audio(self):
+        archivos_videos = [f for f in os.listdir(self.carpeta_destino) if f.endswith(".mp4")]
+        total_videos = len(archivos_videos)
+        for index, archivo in enumerate(archivos_videos, start=1):
+            archivo_video = os.path.join(self.carpeta_destino, archivo)
+            archivo_audio = archivo_video.replace(".mp4", ".wav")
+            self.progreso.emit(f"Convirtiendo {archivo_video} a WAV...")
+            ffmpeg.input(archivo_video).output(archivo_audio, format="wav", acodec="pcm_s16le").run()
+            self.progreso_porcentaje.emit(int((index / total_videos) * 100))
+
+    def eliminar_videos_mp4(self):
+        for archivo in os.listdir(self.carpeta_destino):
+            if archivo.endswith(".mp4"):
+                os.remove(os.path.join(self.carpeta_destino, archivo))
+                self.progreso.emit(f"Eliminado {archivo}")
+    
+    def procesar_transcripciones(self):
+        archivos_audio = [f for f in os.listdir(self.carpeta_destino) if f.endswith(".wav")]
+        total_audios = len(archivos_audio)
+        for index, archivo in enumerate(archivos_audio, start=1):
+            archivo_audio = os.path.join(self.carpeta_destino, archivo)
+            archivo_txt = archivo_audio.replace(".wav", ".txt")
+            
+            if not os.path.exists(archivo_txt) and os.path.getsize(archivo_audio) > 1024:
+                self.progreso.emit(f"Procesando transcripción de {archivo_audio}, esto puede tardar varios minutos...")
+                texto_transcrito = self.transcribir_audio_func(archivo_audio)
+                self.guardar_transcripcion(archivo_audio, texto_transcrito)
+            else:
+                self.progreso.emit(f"Error: El archivo de audio {archivo_audio} está vacío o no existe.")
+            self.progreso_porcentaje.emit(int((index / total_audios) * 100))
+
+    def transcribir_audio_func(self, archivo_audio):
+        try:
+            self.progreso.emit(f"Cargando modelo Whisper...")
+            modelo = whisper.load_model("base")  # Puedes cambiar a "small" o "large" según tu hardware
+            self.progreso.emit(f"Procesando transcripción de {archivo_audio}...")
+            resultado = modelo.transcribe(archivo_audio)
+            
+            if resultado and "text" in resultado:
+                transcripcion = resultado["text"].strip()
+                self.progreso.emit(f"Transcripción recibida: {transcripcion[:100]}...")
+                return transcripcion
+            else:
+                self.progreso.emit(f"Error en la transcripción: Whisper no devolvió texto para {archivo_audio}")
+                return ""
+        except Exception as e:
+            self.error.emit(f"Excepción en la transcripción: {str(e)}")
+            return ""
+    
+    def guardar_transcripcion(self, archivo_audio, texto):
+        try:
+            nombre_txt = archivo_audio.replace(".wav", ".txt")
+            if texto.strip():
+                with open(nombre_txt, "w", encoding="utf-8") as f:
+                    f.write(texto)
+                self.progreso.emit(f"Transcripción guardada en: {nombre_txt}")
+            else:
+                self.error.emit(f"Error: La transcripción para {archivo_audio} está vacía.")
+        except Exception as e:
+            self.error.emit(f"Error al guardar transcripción: {str(e)}")
+
+    def actualizar_log(self, mensaje):
+        self.texto_log.append(mensaje)
 
 class VentanaPrincipal(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Descargador de Videos de YouTube")
         self.setMinimumSize(600, 400)
-        
-        # Widget principal
+
         widget_principal = QWidget()
         self.setCentralWidget(widget_principal)
         layout = QVBoxLayout(widget_principal)
-        
-        # Estilo
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #f0f0f0;
-            }
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-            }
-            QLineEdit, QTextEdit {
-                padding: 8px;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                background-color: white;
-            }
-            QProgressBar {
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                text-align: center;
-                background-color: white;
-            }
-            QProgressBar::chunk {
-                background-color: #4CAF50;
-            }
-            QLabel {
-                font-size: 14px;
-            }
-        """)
-        
-        # Sección de archivo
-        layout_archivo = QHBoxLayout()
-        self.label_archivo = QLabel("Archivo de enlaces:")
+
+        self.boton_buscar = QPushButton("Buscar Archivo")
+        self.boton_buscar.clicked.connect(self.buscar_archivo)
+        layout.addWidget(self.boton_buscar)
+
         self.line_edit_archivo = QLineEdit()
         self.line_edit_archivo.setReadOnly(True)
-        self.boton_buscar = QPushButton("Buscar")
-        self.boton_buscar.clicked.connect(self.buscar_archivo)
-        layout_archivo.addWidget(self.label_archivo)
-        layout_archivo.addWidget(self.line_edit_archivo)
-        layout_archivo.addWidget(self.boton_buscar)
-        layout.addLayout(layout_archivo)
-        
-        # Sección de URL individual
-        layout_url = QHBoxLayout()
-        self.label_url = QLabel("URL individual:")
-        self.line_edit_url = QLineEdit()
-        self.line_edit_url.setPlaceholderText("Ingresa la URL del video de YouTube")
-        layout_url.addWidget(self.label_url)
-        layout_url.addWidget(self.line_edit_url)
-        layout.addLayout(layout_url)
-        
-        # Área de log
+        layout.addWidget(self.line_edit_archivo)
+
         self.texto_log = QTextEdit()
         self.texto_log.setReadOnly(True)
         layout.addWidget(self.texto_log)
-        
-        # Barra de progreso
+
         self.barra_progreso = QProgressBar()
-        self.barra_progreso.setTextVisible(True)
-        self.barra_progreso.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.barra_progreso)
-        
-        # Botón de descarga
+
+        self.transcrib_checkbox = QCheckBox("Transcribir audio después de la descarga")
+        layout.addWidget(self.transcrib_checkbox)
+
         self.boton_descargar = QPushButton("Descargar")
         self.boton_descargar.clicked.connect(self.iniciar_descarga)
         layout.addWidget(self.boton_descargar)
-        
-        # Crear carpeta de destino
-        self.carpeta_destino = self.crear_carpeta_destino()
-        
-        # Inicializar variables
+
+        self.carpeta_destino = os.path.join(os.getcwd(), 'video_outs')
+        if not os.path.exists(self.carpeta_destino):
+            os.makedirs(self.carpeta_destino)
+
         self.thread_descarga = None
-        self.urls = []
-
-    def crear_carpeta_destino(self):
-        carpeta_destino = os.path.join(os.getcwd(), 'video_outs')
-        if not os.path.exists(carpeta_destino):
-            os.makedirs(carpeta_destino)
-            self.agregar_log(f"Carpeta de destino creada: {carpeta_destino}")
-        return carpeta_destino
-
+    
     def buscar_archivo(self):
-        archivo, _ = QFileDialog.getOpenFileName(
-            self,
-            "Seleccionar archivo de enlaces",
-            "",
-            "Archivos de texto (*.txt);;Todos los archivos (*.*)"
-        )
+        archivo, _ = QFileDialog.getOpenFileName(self, "Seleccionar archivo de enlaces", "", "Archivos de texto (*.txt)")
         if archivo:
             self.line_edit_archivo.setText(archivo)
-            self.leer_archivo_enlaces(archivo)
-
-    def leer_archivo_enlaces(self, ruta_archivo):
-        try:
-            with open(ruta_archivo, 'r', encoding='utf-8') as archivo:
-                self.urls = [linea.strip() for linea in archivo if linea.strip()]
-                self.agregar_log(f"Se encontraron {len(self.urls)} enlaces en el archivo")
-        except Exception as e:
-            self.agregar_log(f"Error al leer el archivo: {str(e)}")
-            QMessageBox.warning(self, "Error", f"Error al leer el archivo: {str(e)}")
-
-    def agregar_log(self, mensaje):
-        self.texto_log.append(mensaje)
-        self.texto_log.verticalScrollBar().setValue(
-            self.texto_log.verticalScrollBar().maximum()
-        )
-
+            with open(archivo, 'r', encoding='utf-8') as f:
+                self.urls = [line.strip() for line in f.readlines()]
+    
     def iniciar_descarga(self):
-        # Obtener URLs
-        urls = []
-        if self.line_edit_archivo.text():
-            urls.extend(self.urls)
-        if self.line_edit_url.text():
-            urls.append(self.line_edit_url.text())
-            
+        urls = getattr(self, 'urls', [])
         if not urls:
-            QMessageBox.warning(self, "Error", "Por favor, ingresa una URL o selecciona un archivo de enlaces")
+            QMessageBox.warning(self, "Error", "Ingrese una URL o seleccione un archivo de enlaces")
             return
-            
-        # Deshabilitar controles
-        self.boton_descargar.setEnabled(False)
-        self.boton_buscar.setEnabled(False)
-        self.line_edit_url.setEnabled(False)
-        self.barra_progreso.setValue(0)
-        
-        # Iniciar descarga en un hilo separado
-        self.thread_descarga = DescargadorThread(urls, self.carpeta_destino)
-        self.thread_descarga.progreso.connect(self.actualizar_progreso)
-        self.thread_descarga.error.connect(self.mostrar_error)
-        self.thread_descarga.completado.connect(self.descarga_completada)
+        self.thread_descarga = DescargadorThread(urls, self.carpeta_destino, self.transcrib_checkbox.isChecked())
+        self.thread_descarga.progreso.connect(self.actualizar_log)
+        self.thread_descarga.progreso_porcentaje.connect(self.barra_progreso.setValue)
         self.thread_descarga.start()
+    
+    def actualizar_log(self, mensaje):
+        self.texto_log.append(mensaje)
 
-    def actualizar_progreso(self, mensaje):
-        self.agregar_log(mensaje)
-        self.barra_progreso.setValue(self.barra_progreso.value() + 1)
-
-    def mostrar_error(self, mensaje):
-        self.agregar_log(f"ERROR: {mensaje}")
-        QMessageBox.critical(self, "Error", mensaje)
-
-    def descarga_completada(self):
-        self.boton_descargar.setEnabled(True)
-        self.boton_buscar.setEnabled(True)
-        self.line_edit_url.setEnabled(True)
-        self.agregar_log("¡Descarga completada!")
-        QMessageBox.information(self, "Éxito", "Todos los videos han sido descargados")
-
-def main():
+if __name__ == "__main__":
     app = QApplication(sys.argv)
     ventana = VentanaPrincipal()
     ventana.show()
     sys.exit(app.exec())
-
-if __name__ == "__main__":
-    main() 
