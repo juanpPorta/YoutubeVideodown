@@ -1,2 +1,8 @@
-yt-dlp==2024.3.10
-PyQt6==6.6.1 
+PyQt6
+yt_dlp
+whisper
+openai
+langchain
+langchain-openai
+python-dotenv
+ffmpeg-python

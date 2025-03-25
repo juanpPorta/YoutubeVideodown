@@ -1,1 +1,13 @@
 *.mp4
+*.txt
+*.md
+*.json
+*.csv
+*.jsonl
+*.jsonl.gz
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.ogg
+*.flac
