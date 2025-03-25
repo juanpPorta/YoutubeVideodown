@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QCheckBox, QFileDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QIcon
 import yt_dlp
 
 from langchain_openai import ChatOpenAI
@@ -168,29 +169,37 @@ class VentanaPrincipal(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Descargador de Videos de YouTube")
+        self.setWindowIcon(QIcon("image.png"))
         self.setMinimumSize(600, 400)
         self.setStyleSheet("""
             QMainWindow {
-                background-color: #202124;
+                background-color: #e8f5e9;
+                border-radius: 10px;
             }
             QPushButton {
-                background-color: #4285F4;
+                background-color: #66bb6a;
                 color: white;
                 font-weight: bold;
-                padding: 5px;
-                border-radius: 5px;
+                padding: 8px;
+                border-radius: 8px;
+            }
+            QPushButton:hover {
+                background-color: #43a047;
             }
             QCheckBox, QLabel {
-                color: white;
+                color: #1b5e20;
+                font-size: 14px;
             }
             QLineEdit, QTextEdit {
                 color: black;
                 background-color: white;
+                border-radius: 6px;
+                padding: 4px;
             }
             QProgressBar {
-                background-color: #3c4043;
-                color: white;
-                border: 1px solid #4285F4;
+                background-color: #c8e6c9;
+                color: #1b5e20;
+                border: 1px solid #66bb6a;
                 border-radius: 5px;
                 text-align: center;
             }
@@ -218,11 +227,11 @@ class VentanaPrincipal(QMainWindow):
         self.transcrib_checkbox = QCheckBox("Transcribir audio después de la descarga")
         layout.addWidget(self.transcrib_checkbox)
 
+        self.solo_informe_checkbox = QCheckBox("¡Solo generar informe/transcripción y borrar archivos!")
+        layout.addWidget(self.solo_informe_checkbox)
+
         self.usar_openai_checkbox = QCheckBox("Generar informe con OpenAI")
         layout.addWidget(self.usar_openai_checkbox)
-
-        self.solo_informe_checkbox = QCheckBox("¡Solo generar informe y borrar archivos!")
-        layout.addWidget(self.solo_informe_checkbox)
 
         self.boton_descargar = QPushButton("Descargar")
         self.boton_descargar.clicked.connect(self.iniciar_descarga)
