@@ -2,11 +2,11 @@ import sys
 import os
 import ffmpeg
 import whisper
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout,
     QPushButton, QLineEdit, QTextEdit, QProgressBar,
-    QMessageBox, QCheckBox, QFileDialog
+    QMessageBox, QCheckBox, QFileDialog, QLabel
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QIcon
@@ -16,7 +16,9 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import PromptTemplate
 
 load_dotenv()
-llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.7)
+api_key = os.getenv("OPENAI_API_KEY")
+llm = ChatOpenAI(model_name="gpt-4o-mini", temperature=0.7, api_key=api_key)
+
 informe_prompt = PromptTemplate.from_template("""
 Eres un asistente profesional experto en análisis de contenido hablado.
 
@@ -169,7 +171,7 @@ class VentanaPrincipal(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Descargador de Videos de YouTube")
-        self.setWindowIcon(QIcon("image.png"))
+        self.setWindowIcon(QIcon("image.ico"))
         self.setMinimumSize(600, 400)
         self.setStyleSheet("""
             QMainWindow {
@@ -227,11 +229,19 @@ class VentanaPrincipal(QMainWindow):
         self.transcrib_checkbox = QCheckBox("Transcribir audio después de la descarga")
         layout.addWidget(self.transcrib_checkbox)
 
+        self.usar_openai_checkbox = QCheckBox("Generar informe con OpenAI")
+        layout.addWidget(self.usar_openai_checkbox)
+
         self.solo_informe_checkbox = QCheckBox("¡Solo generar informe/transcripción y borrar archivos!")
         layout.addWidget(self.solo_informe_checkbox)
 
-        self.usar_openai_checkbox = QCheckBox("Generar informe con OpenAI")
-        layout.addWidget(self.usar_openai_checkbox)
+        self.label_api = QLabel("Introduce tu API Key de OpenAI (opcional):")
+        layout.addWidget(self.label_api)
+        self.api_key_input = QLineEdit()
+        layout.addWidget(self.api_key_input)
+        self.boton_guardar_api = QPushButton("Guardar API Key")
+        self.boton_guardar_api.clicked.connect(self.guardar_api_key)
+        layout.addWidget(self.boton_guardar_api)
 
         self.boton_descargar = QPushButton("Descargar")
         self.boton_descargar.clicked.connect(self.iniciar_descarga)
@@ -249,6 +259,14 @@ class VentanaPrincipal(QMainWindow):
             self.line_edit_archivo.setText(archivo)
             with open(archivo, 'r', encoding='utf-8') as f:
                 self.urls = [line.strip() for line in f.readlines()]
+
+    def guardar_api_key(self):
+        nueva_key = self.api_key_input.text().strip()
+        if nueva_key:
+            set_key('.env', 'OPENAI_API_KEY', nueva_key)
+            QMessageBox.information(self, "API Key guardada", "La API Key fue actualizada correctamente en el archivo .env")
+        else:
+            QMessageBox.warning(self, "Campo vacío", "Por favor, introduce una clave válida o déjalo en blanco para usar la del .env")
 
     def iniciar_descarga(self):
         urls = getattr(self, 'urls', [])
